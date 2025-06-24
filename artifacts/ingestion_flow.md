@@ -44,20 +44,20 @@ Loop = 1→2→3→4→5 → back to 1.
 * **Daily**   – Checkpoint cleaner keeps the last *N* commits.
 * **Ad-hoc**  – Admin DDL (add/drop col) → Metastore; next Phase-2 batch reloads schema.
 
-### Failure Cheat-Sheet
+### Failure Scenarios
 * Phase-1 crash → offsets intact; Airflow retry = no data loss.
 * Phase-2 crash → raw files pile up; restarting Phase-2 replays pending partitions.
 * Breaking schema → job fails fast; Metastore marks schema `BLOCKED` for operator fix.
 
 The system runs in an endless **produce → dump → transform → commit** loop. Think of it as a conveyor belt where each component hands data to the next in near-real-time.
 
-### 2.1 Per-Batch Loop (minutes)
+### 2.1 Per-Batch Flow
 1. **Kafka publishes events**.  
 2. **Phase-1 Spark job** reads the newest offsets (respecting its checkpoint) and **appends** fresh JSON files under that minute’s S3 prefix.  
 3. **Phase-2 Spark job** notices new raw partitions (watermark later than last commit) and starts a micro-batch:
    a. Reads the JSON.  
    b. Runs the configured transform JARs.  
-   c. **Schema check:** compares batch schema with the cached *activeSchema*  
+   c. **Schema check:** compares batch schema with the cached *activeSchema* in metastore service
       • **No change** → proceed.  
       • **Add / drop (non-breaking)** → call Metastore `ADD/DROP COLUMN`; batch proceeds with old projection; next batch loads new schema.  
       • **Breaking change** (type narrowing, PK change, rename) → job **fails fast**; metric `breaking_schema_change=1`; Airflow alerts.  
@@ -67,7 +67,7 @@ The system runs in an endless **produce → dump → transform → commit** loop
    * Advances its checkpoint.  
    * Pushes metrics (`records`, `lag_seconds`) to the Metrics Service.
 
-This loop repeats every few seconds, keeping end-to-end lag low.
+This loop repeats every few minutes, keeping end-to-end lag low.
 
 ### 2.2 Scheduled Maintenance
 | Frequency | Task |
@@ -75,12 +75,6 @@ This loop repeats every few seconds, keeping end-to-end lag low.
 | Hourly | Airflow task verifies Phase-1/2 are <max_lag> and restarts pods if needed. |
 | Daily  | Checkpoint cleaner trims `_spark_metadata` to the last *N* commits to cap S3 growth. |
 | Ad-hoc | Admin issues DDL (add / drop col) → Metastore; next Phase-2 batch reloads schema automatically. |
-
-### 2.3 Failure Recovery Cheat-Sheet
-1. **Phase-1 fails** → Airflow retries; offsets untouched so no data loss.
-2. **Phase-2 fails** → Airflow retries; if persists, raw dump keeps accumulating; backfill DAG can replay once fixed.
-3. **Breaking schema change** → Job fails fast; Metastore status=BLOCKED, operator intervention required (see LLD).
-
 ---
 
 ## Quick Visual
