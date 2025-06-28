@@ -1,0 +1,11 @@
+
+[0;36m================================================================================[0m
+[0;36m                        🚀 PHASE 1: PLATFORM DEPLOYMENT                        [0m
+[0;36m================================================================================[0m
+
+2025-06-29 01:24:35 [INFO] Building and starting all services...
+2025-06-29 01:24:35 [INFO] Executing: Platform deployment
+2025-06-29 01:24:35 [DEBUG] Command: ./entrypoint.sh
+./demo.sh: line 110: ./entrypoint.sh: Permission denied
+2025-06-29 01:24:35 [ERROR] Platform deployment ✗
+2025-06-29 01:24:35 [ERROR] Platform deployment failed

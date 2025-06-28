@@ -1,0 +1,17 @@
+2025-06-29 01:35:14 [INFO] Working directory: /Users/shubhamkumar/CascadeProjects/my-project/ingestion_framework
+
+[0;36m========================================[0m
+[0;36m 🚀 QUICK PLATFORM STARTUP[0m
+[0;36m========================================[0m
+
+2025-06-29 01:35:15 [INFO] Starting Docker Compose services...
+2025-06-29 01:35:15 [INFO] Executing: Docker Compose startup
+2025-06-29 01:35:15 [DEBUG] Command: docker-compose up -d
+ localstack Pulling 
+ redpanda Pulling 
+ redpanda-console Pulling 
+ redpanda-console Error 
+ localstack Error 
+ redpanda Error 
+Error response from daemon: repository docker.redpanda.com/vectorized/console not found: name unknown: repository name not known to registry
+2025-06-29 01:35:18 [ERROR] Docker Compose startup ✗

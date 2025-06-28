@@ -1,6 +1,6 @@
 # Low-Level Design (LLD)
 
-This document dives into component-level details for the **Metastore Service**, **Airflow DAGs**, **Metrics Service**, and **Ingestion Framework** (Spark jobs) that make up the ingestion platform.
+This document provides detailed component-level specifications for the **Java Metastore Service**, **Airflow DAGs**, **Spark Ingestion Framework**, and **Schema Evolution** that comprise the production-ready ingestion platform.
 
 ---
 
@@ -9,45 +9,69 @@ This document dives into component-level details for the **Metastore Service**, 
 ### 1.1 Technology Stack
 | Layer | Choice |
 |-------|--------|
-| Language | Python 3.11 |
-| Framework | FastAPI + Pydantic |
-| Persistence | SQLite (local demo) / PostgreSQL (prod) |
-| Migrations | Alembic |
-| Glue Sync | `boto3` Glue SDK |
+| Language | Java 17 |
+| Framework | Spring Boot 3.2 + Spring Data JPA |
+| Persistence | PostgreSQL with HikariCP connection pooling |
+| Migrations | Hibernate DDL auto-update |
+| Validation | Jakarta Bean Validation |
+| Monitoring | Spring Boot Actuator |
 
-### 1.2 DB Schema (ERD)
+### 1.2 Database Schema (JPA Entities)
 ```
-+-----------------+      +---------------------+
-|  datasets       |      |  schema_versions    |
-+-----------------+      +---------------------+
-| id (PK)         |<--+  | id (PK)            |
-| name            |   |  | dataset_id (FK)    |
-| kafka_topic     |   +--| version            |
-| mode            |      | ddl_sql            |
-| pk_fields       |      | created_at         |
-| partition_keys  |      +---------------------+
-| transform_jars  |
-| created_at      |
-| updated_at      |
-+-----------------+
++------------------+      +----------------------+
+|  datasets        |      |  schema_versions     |
++------------------+      +----------------------+
+| id (PK)          |<--+  | id (PK)             |
+| name (UNIQUE)    |   |  | dataset_id (FK)     |
+| kafka_topic      |   +--| version             |
+| mode             |      | schema_json (TEXT)  |
+| pk_fields (JSON) |      | status (ENUM)       |
+| partition_keys   |      | created_at          |
+| transform_jars   |      +----------------------+
+| created_at       |
+| updated_at       |
++------------------+
 
 +------------------+
 | ddl_history      |
 +------------------+
 | id (PK)          |
 | dataset_id (FK)  |
-| ddl_sql          |
-| glue_synced (Y/N)|
+| ddl_sql (TEXT)   |
+| glue_synced      |
 | created_at       |
 +------------------+
 ```
 
-### 1.3 REST API
+**Schema Status Enum**: `ACTIVE`, `PENDING`, `OBSOLETE`, `BLOCKED`
+
+### 1.3 Service Architecture
+
+**Layered Architecture**:
+- **Controller Layer**: REST endpoints with validation
+- **Service Layer**: Business logic and transaction management
+- **Repository Layer**: JPA data access with custom queries
+- **Entity Layer**: JPA entities with relationships
+
+**Key Features**:
+- **Transaction Management**: `@Transactional` for ACID compliance
+- **Validation**: Jakarta Bean Validation on DTOs
+- **Exception Handling**: Global exception handler with proper HTTP status codes
+- **Health Checks**: Spring Boot Actuator endpoints
+- **Connection Pooling**: HikariCP for database connections
+
+### 1.4 REST API
 | Verb | Path | Purpose |
 |------|------|---------|
-| GET  | `/datasets` | List datasets. |
-| POST | `/datasets` | Create dataset. |
-| GET  | `/datasets/{id}` | Retrieve config JSON. |
+| GET  | `/` | Service info and health |
+| GET  | `/health` | Health check endpoint |
+| GET  | `/datasets` | List all datasets |
+| POST | `/datasets` | Create new dataset |
+| GET  | `/datasets/{id}` | Get dataset by ID or name |
+| PATCH | `/datasets/{id}` | Update dataset configuration |
+| GET  | `/datasets/{id}/schema/active` | Get active schema version |
+| GET  | `/datasets/{id}/schema/versions` | List all schema versions |
+| POST | `/datasets/{id}/schema/evolve` | Handle schema evolution |
 | PATCH| `/datasets/{id}` | Update mode / transforms. |
 | POST | `/datasets/{id}/ddl` | Submit `ADD COLUMN / DROP COLUMN` SQL; row inserted into `ddl_history`; Glue catalog updated asynchronously. |
 
@@ -63,7 +87,7 @@ The `schema_versions` table stores an immutable history of table schemas, enabli
 | `version` | INT | Monotonic per dataset. |
 | `schema_json` | TEXT | Spark `StructType` JSON. |
 | `created_at` | TIMESTAMP | Insertion time. |
-| `status` | ENUM(ACTIVE,PENDING,OBSOLETE) | Current applicability. |
+| `status` | ENUM(ACTIVE,PENDING,OBSOLETE,BLOCKED) | Current applicability. |
 
 #### Evolution lifecycle
 1. **Detection** (Phase-2 job)
@@ -150,61 +174,164 @@ This fail-fast strategy prevents silent corruption while giving operators a manu
 
 ## 4. Ingestion Framework (Spark)
 
-### 4.1 Packaging
-| Item | Details |
-|------|---------|
+### 4.1 Technology Stack
+| Layer | Choice |
+|-------|--------|
 | Language | Scala 2.12 |
-| Build | sbt-assembly JAR (fat JAR) |
-| Runtime | Spark 3.5 Structured Streaming |
+| Framework | Spark 3.4.1 (Structured Streaming) |
+| Build Tool | Maven with Scala plugin and Shade plugin |
+| Serialization | Kryo serializer |
+| Checkpointing | S3A with exactly-once semantics |
+| Lakehouse | Apache Hudi (upsert) / Parquet (append) |
+| Logging | Log4j with structured logging |
+| Configuration | Centralized config management |
 
-### 4.2 Phase-1 Logic
+### 4.2 Modular Core Framework
+
+**Core Components**:
+- **IngestionConfig**: Centralized configuration parsing with scopt
+- **MetastoreClient**: HTTP client for Metastore API integration
+- **SchemaEvolution**: Schema comparison and evolution logic
+- **TransformerLoader**: Dynamic JAR loading from S3
+- **LoggingUtils**: Consistent logging patterns
+- **SparkUtils**: Common Spark configurations and utilities
+
+### 4.3 Phase-1 Implementation
 ```scala
-val df = spark.readStream
-  .format("kafka")
-  .option("kafka.bootstrap.servers", env.kafka)
-  .option("subscribe", topic)
-  .option("startingOffsets", "latest")
-  .load()
+val config = IngestionConfig.parsePhase1Args(cmdArgs)
+val logger = LoggingUtils.setupJobLogging(getClass.getName)
 
-val parsed = df.selectExpr("CAST(value AS STRING) as json", "topic", "partition", "offset", "timestamp")
+val spark = SparkUtils.createOptimizedSparkSession(
+  s"Phase1-${config.topic}", 
+  SparkUtils.getS3ALocalStackConfig()
+)
 
-parsed.writeStream
+val kafkaOptions = SparkUtils.getKafkaSourceOptions(
+  config.kafkaBootstrapServers, config.topic, config.startingOffsets
+)
+val kafkaStream = spark.readStream.format("kafka")
+kafkaOptions.foreach { case (key, value) => kafkaStream.option(key, value) }
+
+val structuredStream = kafkaStream.load().selectExpr(
+  "CAST(value AS STRING) AS json",
+  "struct(topic, partition, offset, timestamp, CAST(key AS STRING) as key) AS _meta"
+)
+
+structuredStream.writeStream
   .format("json")
-  .option("path", s"s3://raw/$topic/date=${today}")
-  .option("checkpointLocation", s"/chk/$topic/phase1")
+  .option("path", config.rawPath)
+  .option("checkpointLocation", config.checkpoint)
+  .trigger(SparkUtils.Triggers.FAST_PROCESSING)
   .start()
 ```
 
-### 4.3 Phase-2 Logic
+### 4.4 Phase-2 Implementation
 ```scala
-val raw = spark.readStream
-  .schema(latestSchemaFromMetastore())
-  .json(rawPath)
+// Configuration and setup
+val config = IngestionConfig.parsePhase2Args(cmdArgs)
+val spark = SparkUtils.createOptimizedSparkSession(s"Phase2-${config.dataset}", s3Config)
+val metastoreClient = new MetastoreClient(config.metastoreUrl)
 
-val transformed = TransformRunner.run(raw, jarsFromMetastore())
+// Fetch dataset configuration and transformers
+val datasetConfig = metastoreClient.getDatasetConfig(config.dataset)
+val transformers = TransformerLoader.loadTransformers(datasetConfig.transformJars)
 
-val writer = if (mode == "append") transformed.writeStream.format("parquet")
-             else transformed.writeStream.format("hudi")
+// Read raw JSON data
+val dataStream = spark.readStream.format("json").load(config.rawPath)
+val currentSchema = dataStream.schema
+
+// Schema evolution handling
+val activeSchemaOpt = metastoreClient.getActiveSchemaVersion(datasetConfig.id)
+activeSchemaOpt match {
+  case Some(activeSchemaJson) =>
+    SchemaEvolution.parseSchemaJson(activeSchemaJson) match {
+      case Success(activeSchema) =>
+        val comparison = SchemaEvolution.compareSchemas(activeSchema, currentSchema)
+        if (!SchemaEvolution.handleSchemaEvolution(comparison, datasetConfig.id, metastoreClient)) {
+          throw new RuntimeException("Breaking schema change detected - job terminated")
+        }
+        // Update schema for non-breaking changes
+        if (comparison.changeType == SchemaEvolution.NonBreaking) {
+          metastoreClient.updateActiveSchema(datasetConfig.id, currentSchema.json, "NON_BREAKING")
+        }
+      case Failure(e) => 
+        metastoreClient.updateActiveSchema(datasetConfig.id, currentSchema.json, "INITIAL")
+    }
+  case None =>
+    // Capture initial schema
+    metastoreClient.updateActiveSchema(datasetConfig.id, currentSchema.json, "INITIAL")
+}
+
+// Apply transformers sequentially
+val transformedStream = transformers.foldLeft(dataStream) { (ds, transformer) =>
+  transformer.transform(ds)
+}
+
+// Configure writer based on mode
+val writer = datasetConfig.mode match {
+  case "append" =>
+    transformedStream.writeStream.format("parquet").outputMode("append")
+  case "upsert" =>
+    val primaryKey = datasetConfig.pkFields.headOption.getOrElse("id")
+    val hudiOptions = SparkUtils.getHudiUpsertOptions(config.dataset, primaryKey)
+    val hudiWriter = transformedStream.writeStream.format("hudi")
+    hudiOptions.foreach { case (key, value) => hudiWriter.option(key, value) }
+    hudiWriter.outputMode("append")
+}
 
 writer
-  .option("path", lakehousePath)
-  .option("checkpointLocation", s"/chk/$topic/phase2")
+  .option("path", config.lakePath)
+  .option("checkpointLocation", config.checkpoint)
+  .trigger(SparkUtils.Triggers.NORMAL_PROCESSING)
   .start()
 ```
 
-### 4.4 Transform Plug-in SPI
+### 4.5 Dynamic Transformer Loading
 ```scala
+// Base transformer interface
 trait Transformer extends Serializable {
   def transform(ds: Dataset[Row]): Dataset[Row]
 }
+
+// Dynamic loading implementation
+object TransformerLoader {
+  def loadTransformers(jarUrls: List[String]): List[Transformer] = {
+    jarUrls.flatMap { jarUrl =>
+      val classLoader = new URLClassLoader(Array(new URL(jarUrl)), getClass.getClassLoader)
+      
+      // Multiple strategies for finding transformer classes
+      val transformerClasses = findTransformerClasses(classLoader, jarUrl)
+      
+      transformerClasses.map { className =>
+        val transformerClass = classLoader.loadClass(className)
+        transformerClass.getDeclaredConstructor().newInstance().asInstanceOf[Transformer]
+      }
+    }
+  }
+  
+  private def findTransformerClasses(classLoader: URLClassLoader, jarUrl: String): List[String] = {
+    // Scan JAR for Transformer implementations
+    // Multiple naming patterns supported
+  }
+}
 ```
-* JARs are loaded via URLClassLoader; list obtained from Metastore.
+
+**Features**:
+- **URLClassLoader**: Dynamic JAR loading from S3
+- **Multiple Discovery**: Class name patterns and JAR scanning
+- **Validation**: Type checking and error handling
+- **Logging**: Comprehensive loading and execution logs
 
 ### 4.5 Schema Evolution Handling
 1. On every micro-batch the driver reads `activeSchema` (version id cached in a broadcast variable).
 2. **Add column (new field detected)**
    * Ingest job infers Spark data type and immediately issues a **DML-style Glue update**:
-     ```scala
+{{ ... }}
+```scala
+  .option("checkpointLocation", config.checkpoint)
+  .trigger(SparkUtils.Triggers.NORMAL_PROCESSING)
+  .start()
+```
      spark.sql(s"ALTER TABLE ${db}.${table} ADD COLUMN ${col} ${sparkType}")
      ```
      or via Glue SDK:

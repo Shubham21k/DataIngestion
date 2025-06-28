@@ -39,7 +39,7 @@ Kafka Topic  ──▶  Phase-1 Spark Job  ──▶  Raw JSON  ──▶  Phase
 ```
 
 1. **Phase-1: Raw Dump**  
-   * Consumes Kafka with `startingOffsets=latest` (or earliest for first run).  
+   * Consumes Kafka with `startingOffsets=earliest` for first run.
    * Stores each event as line-delimited JSON in `s3://raw/<topic>/date=YYYY-MM-DD/`.  
    * Captures Kafka metadata columns (offset, partition, timestamp, key).  
    * Persists Structured-Streaming checkpoint to keep offsets.
@@ -60,20 +60,18 @@ Kafka Topic  ──▶  Phase-1 Spark Job  ──▶  Raw JSON  ──▶  Phase
    * If upstream failure drops Kafka data, Airflow can trigger Phase-2 on past raw paths without code change.
 
 <!-- Extra sections removed -->
-```
+
 Docker Compose
 ├─ kafka  (Redpanda)      ──┐
 ├─ localstack (S3)        ──┴─> shared "s3://" volumes
-├─ metastore (Flask + SQLite)
+├─ metastore (FastAPI + Postgres)
 ├─ spark-standalone (driver + workers)
 └─ airflow (scheduler + webserver)
-```
 
 ---
+<!-- Interfaces section intentionally omitted -->
+<!-- Interfaces moved to LLD -->
 
-<!-- Interfaces section removed -->
-### 5.1 Metastore API (excerpt)
-| Method | Path | Description |
 |--------|------|-------------|
 | GET | `/config/{table}` | Retrieve full config JSON. |
 | POST | `/ddl` | Submit `add_column` / `drop_column` ops. |
@@ -96,9 +94,9 @@ _Complete schema left for LLD._
 ---
 
 <!-- Non-Goals section removed -->
-* Data reconciliation framework.
-* Advanced observability (Prometheus, Grafana dashboards). These can be layered later without code change.
-* Multi-AZ high availability; demo runs single-instance containers.
+
+
+
 
 ---
 

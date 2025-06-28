@@ -1,0 +1,206 @@
+version: '3.8'
+
+x-airflow-common: &airflow-common
+  image: apache/airflow:2.7.1-python3.9
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    AIRFLOW__CORE__FERNET_KEY: "KcHBtmU3JS_3JZ3EVc_E7InQ9uqUC1QvYOFTgZJLGfk="
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW_VAR_metastore_url: "http://metastore:8000"
+    AIRFLOW_VAR_dataset_name: "orders"
+  volumes:
+    - ./airflow/dags:/opt/airflow/dags
+    - ./airflow/logs:/opt/airflow/logs
+    - ./airflow/plugins:/opt/airflow/plugins
+  depends_on:
+    - postgres
+
+services:
+  # PostgreSQL for both Airflow and Metastore
+  postgres:
+    image: postgres:13
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password
+      POSTGRES_MULTIPLE_DATABASES: airflow,metastore
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init-services.sh:/docker-entrypoint-initdb.d/init-services.sh:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 5s
+      retries: 5
+    ports:
+      - "5432:5432"
+
+  # LocalStack (S3)
+  localstack:
+    image: localstack/localstack:2.0.0
+    environment:
+      - DEBUG=1
+      - SERVICES=s3,glue
+      - AWS_DEFAULT_REGION=us-east-1
+      - EDGE_PORT=4566
+    ports:
+      - "4566:4566"
+    volumes:
+      - ./init-services.sh:/etc/localstack/init/ready.d/init-services.sh:ro
+      - localstack_data:/tmp/localstack
+    healthcheck:
+      test: ["CMD", "bash", "-c", "awslocal s3 ls"]
+      interval: 5s
+      timeout: 10s
+      retries: 5
+
+  # Kafka/Redpanda
+  redpanda:
+    image: docker.redpanda.com/vectorized/redpanda:v22.3.6
+    command:
+      - redpanda
+      - start
+      - --smp=1
+      - --memory=1G
+      - --reserve-memory=0M
+      - --overprovisioned
+      - --node-id=0
+      - --check=false
+      - --pandaproxy-addr=0.0.0.0:8082
+      - --advertise-pandaproxy-addr=redpanda:8082
+      - --kafka-addr=0.0.0.0:9092
+      - --advertise-kafka-addr=redpanda:9092
+    ports:
+      - "9092:9092"
+      - "8081:8081"
+      - "8082:8082"
+    healthcheck:
+      test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redpanda-console:
+    image: docker.redpanda.com/vectorized/console:latest
+    environment:
+      KAFKA_BROKERS: redpanda:9092
+    ports:
+      - "8080:8080"
+    depends_on:
+      - redpanda
+
+  # Metastore Service
+  metastore:
+    build:
+      context: ./metastore-java
+      dockerfile: Dockerfile
+    container_name: metastore
+    environment:
+      POSTGRES_USER: metastore
+      POSTGRES_PASSWORD: metastore
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: metastore
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Metrics Service
+  metrics-service:
+    build:
+      context: ./metrics-service
+      dockerfile: Dockerfile
+    container_name: metrics-service
+    environment:
+      POSTGRES_USER: metrics
+      POSTGRES_PASSWORD: metrics
+      POSTGRES_HOST: postgres
+      POSTGRES_PORT: 5432
+      POSTGRES_DB: metrics
+      SPRING_PROFILES_ACTIVE: docker
+    ports:
+      - "9090:9090"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/actuator/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+
+  # Spark Standalone for jobs
+  spark-master:
+    image: docker.io/bitnami/spark:3.4.1
+    environment:
+      - SPARK_MODE=master
+    ports:
+      - "8001:8080"
+      - "7077:7077"
+    volumes:
+      - ./spark/target/scala-2.12/ingestion-assembly-0.1.0-SNAPSHOT.jar:/opt/spark/jobs/ingestion.jar:ro
+
+  spark-worker:
+    image: docker.io/bitnami/spark:3.4.1
+    environment:
+      - SPARK_MODE=worker
+      - SPARK_MASTER_URL=spark://spark-master:7077
+      - SPARK_WORKER_MEMORY=2G
+      - SPARK_WORKER_CORES=2
+    volumes:
+      - ./spark/target/scala-2.12/ingestion-assembly-0.1.0-SNAPSHOT.jar:/opt/spark/jobs/ingestion.jar:ro
+    depends_on:
+      - spark-master
+
+  # Airflow components
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8002:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: always
+    depends_on:
+      - airflow-init
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: always
+    depends_on:
+      - airflow-init
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        mkdir -p /sources/logs /sources/dags /sources/plugins
+        chown -R "${AIRFLOW_UID:-50000}:0" /sources/{logs,dags,plugins}
+        exec airflow db init && 
+        airflow users create -r Admin -u admin -p admin -e admin@example.com -f Admin -l User
+    restart: on-failure
+
+volumes:
+  postgres_data:
+  localstack_data:
