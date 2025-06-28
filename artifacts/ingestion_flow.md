@@ -7,17 +7,41 @@ This document details the end-to-end data flow for the Kafka-based ingestion pla
 
 The flows leverage the Java Metastore service, modular Spark framework, and Airflow orchestration.
 
+## Deployment Options
+
+**Two Docker Compose configurations are available:**
+
+### Full Platform (`docker-compose.yml`)
+- **Purpose**: Complete production-ready platform
+- **Command**: `./entrypoint.sh`
+- **Services**: Airflow, Metastore, Metrics, Spark, Redpanda/Kafka, PostgreSQL, LocalStack
+- **Use Case**: Full development and production-like testing
+
+### Demo Platform (`docker-compose-working.yml`)
+- **Purpose**: Simplified, reliable demo environment
+- **Command**: `./demo/demo.sh`
+- **Services**: Confluent Kafka, PostgreSQL, LocalStack, Kafka UI
+- **Use Case**: Interviews, demos, quick testing
+
 ---
 
 ## 1. Initial Dataset Setup and Bootstrap
 
 ### 1.1 Dataset Registration
+
+**Current Technology Stack:**
+- **Metastore**: Java 17 + Spring Boot 3.2 + JPA/Hibernate
+- **Database**: PostgreSQL 13+ with HikariCP connection pooling
+- **API**: RESTful endpoints with Jakarta Bean Validation
+- **Monitoring**: Spring Boot Actuator with health checks
+
 | Step | Component | Action |
 |------|-----------|--------|
 | 1 | Admin/API | `POST /datasets` to Java Metastore with dataset configuration |
-| 2 | Metastore | Validates request, creates Dataset entity in PostgreSQL |
-| 3 | Metastore | **No initial schema created** - will be auto-inferred from first data |
-| 4 | Response | Returns dataset configuration with unique ID |
+| 2 | Metastore | Validates request using Jakarta Bean Validation |
+| 3 | Metastore | Creates Dataset entity in PostgreSQL with JPA/Hibernate |
+| 4 | Metastore | **No initial schema created** - will be auto-inferred from first data |
+| 5 | Response | Returns dataset configuration with unique ID and metadata |
 
 **Dataset Configuration**:
 ```json

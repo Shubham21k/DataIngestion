@@ -15,8 +15,17 @@ P1 demo will run locally (Docker Compose) with tiny data volumes while preservin
 ---
 
 ## 2. Component Overview
+
+**Technology Stack:**
+- **Kafka**: Confluent Kafka + Zookeeper (production) / Redpanda (alternative)
+- **Compute**: Apache Spark 3.4.1 with Scala 2.12
+- **Metastore**: Java 17 + Spring Boot 3.2 + JPA/Hibernate
+- **Database**: PostgreSQL 13+ with HikariCP connection pooling
+- **Orchestration**: Apache Airflow 2.7.1
+- **Storage**: LocalStack S3 (local) / AWS S3 (production)
+- **Monitoring**: Spring Boot Actuator + Custom metrics
+
 | # | Component | Purpose |
-|---|-----------|---------|
 | 1 | **Metastore Service** | Source of truth for dataset configs: topic ⇄ table mapping, mode (append/upsert), primary keys, partition keys, allowed schema changes, list of transformation JARs. Backed by a lightweight relational DB. Exposes a REST API and propagates DDL/DML updates to AWS Glue catalog. |
 | 2 | **Airflow DAGs** | Orchestrate Phase-1 and Phase-2 Spark jobs, retries, and ad-hoc backfills. Reads pipeline metadata from Metastore. |
 | 3 | **Ingestion Framework** | Spark Structured-Streaming jobs split into two logical phases. Performs checkpointing via Kafka offsets, applies schema evolution & transformations, and writes to Lakehouse paths. |

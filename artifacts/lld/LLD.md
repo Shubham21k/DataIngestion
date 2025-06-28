@@ -25,22 +25,31 @@ This document provides detailed component-level specifications for the **Java Me
 | name (UNIQUE)    |   |  | dataset_id (FK)     |
 | kafka_topic      |   +--| version             |
 | mode             |      | schema_json (TEXT)  |
-| pk_fields (JSON) |      | status (ENUM)       |
-| partition_keys   |      | created_at          |
-| transform_jars   |      +----------------------+
-| created_at       |
-| updated_at       |
-+------------------+
+| created_at       |      | status (ENUM)       |
+| updated_at       |      | created_at          |
++------------------+      | updated_at          |
+                          +----------------------+
 
-+------------------+
-| ddl_history      |
-+------------------+
-| id (PK)          |
-| dataset_id (FK)  |
-| ddl_sql (TEXT)   |
++------------------+      +----------------------+
+| ddl_history      |      | dataset_pk_fields    |
++------------------+      +----------------------+
+| id (PK)          |      | dataset_id (FK)     |
+| dataset_id (FK)  |      | field_name          |
+| ddl_sql (TEXT)   |      +----------------------+
 | glue_synced      |
-| created_at       |
-+------------------+
+| created_at       |      +----------------------+
+| updated_at       |      | dataset_partition_keys|
++------------------+      +----------------------+
+                          | dataset_id (FK)     |
+                          | key_name            |
+                          +----------------------+
+
+                          +----------------------+
+                          | dataset_transform_jars|
+                          +----------------------+
+                          | dataset_id (FK)     |
+                          | jar_url             |
+                          +----------------------+
 ```
 
 **Schema Status Enum**: `ACTIVE`, `PENDING`, `OBSOLETE`, `BLOCKED`
