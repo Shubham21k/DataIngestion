@@ -1,0 +1,13 @@
+com/example/metastore/repository/SchemaVersionRepository.class
+com/example/metastore/repository/DatasetRepository.class
+com/example/metastore/entity/SchemaVersion$SchemaStatus.class
+com/example/metastore/entity/DDLHistory.class
+com/example/metastore/entity/SchemaVersion.class
+com/example/metastore/exception/DatasetNotFoundException.class
+com/example/metastore/exception/DuplicateDatasetException.class
+com/example/metastore/controller/MetastoreController.class
+com/example/metastore/service/DatasetService.class
+com/example/metastore/dto/DatasetRequest.class
+com/example/metastore/entity/Dataset.class
+com/example/metastore/dto/SchemaEvolutionRequest.class
+com/example/metastore/MetastoreApplication.class

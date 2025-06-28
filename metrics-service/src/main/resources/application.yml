@@ -1,0 +1,110 @@
+spring:
+  application:
+    name: metrics-service
+  
+  datasource:
+    url: jdbc:postgresql://${POSTGRES_HOST:localhost}:${POSTGRES_PORT:5432}/${POSTGRES_DB:metrics}
+    username: ${POSTGRES_USER:metrics}
+    password: ${POSTGRES_PASSWORD:metrics}
+    driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+      idle-timeout: 300000
+      connection-timeout: 20000
+      leak-detection-threshold: 60000
+
+  jpa:
+    hibernate:
+      ddl-auto: update
+    show-sql: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+        use_sql_comments: true
+        jdbc:
+          batch_size: 25
+        order_inserts: true
+        order_updates: true
+    open-in-view: false
+
+  data:
+    jpa:
+      repositories:
+        enabled: true
+
+server:
+  port: ${SERVER_PORT:9090}
+  servlet:
+    context-path: /
+  compression:
+    enabled: true
+    mime-types: application/json,application/xml,text/html,text/xml,text/plain
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,metrics,prometheus
+      base-path: /actuator
+  endpoint:
+    health:
+      show-details: always
+    metrics:
+      enabled: true
+    prometheus:
+      enabled: true
+  metrics:
+    export:
+      prometheus:
+        enabled: true
+    distribution:
+      percentiles-histogram:
+        http.server.requests: true
+      percentiles:
+        http.server.requests: 0.5,0.95,0.99
+      sla:
+        http.server.requests: 10ms,50ms,100ms,200ms,500ms
+
+logging:
+  level:
+    com.example.metrics: INFO
+    org.springframework.web: INFO
+    org.hibernate.SQL: WARN
+    org.hibernate.type.descriptor.sql.BasicBinder: WARN
+  pattern:
+    console: "%d{yyyy-MM-dd HH:mm:ss} - %msg%n"
+    file: "%d{yyyy-MM-dd HH:mm:ss} [%thread] %-5level %logger{36} - %msg%n"
+  file:
+    name: logs/metrics-service.log
+
+# Custom application properties
+metrics:
+  retention:
+    days: 30
+  alerts:
+    error-rate-threshold: 10.0
+    lag-threshold-seconds: 300
+    throughput-threshold-rps: 100
+  batch:
+    size: 100
+    timeout-seconds: 30
+
+---
+spring:
+  config:
+    activate:
+      on-profile: docker
+  datasource:
+    url: jdbc:postgresql://postgres:5432/metrics
+    username: metrics
+    password: metrics
+
+server:
+  port: 9090
+
+logging:
+  level:
+    root: INFO
+    com.example.metrics: INFO

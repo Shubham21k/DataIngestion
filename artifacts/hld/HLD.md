@@ -15,8 +15,17 @@ P1 demo will run locally (Docker Compose) with tiny data volumes while preservin
 ---
 
 ## 2. Component Overview
+
+**Technology Stack:**
+- **Kafka**: Confluent Kafka + Zookeeper (production) / Redpanda (alternative)
+- **Compute**: Apache Spark 3.4.1 with Scala 2.12
+- **Metastore**: Java 17 + Spring Boot 3.2 + JPA/Hibernate
+- **Database**: PostgreSQL 13+ with HikariCP connection pooling
+- **Orchestration**: Apache Airflow 2.7.1
+- **Storage**: LocalStack S3 (local) / AWS S3 (production)
+- **Monitoring**: Spring Boot Actuator + Custom metrics
+
 | # | Component | Purpose |
-|---|-----------|---------|
 | 1 | **Metastore Service** | Source of truth for dataset configs: topic ⇄ table mapping, mode (append/upsert), primary keys, partition keys, allowed schema changes, list of transformation JARs. Backed by a lightweight relational DB. Exposes a REST API and propagates DDL/DML updates to AWS Glue catalog. |
 | 2 | **Airflow DAGs** | Orchestrate Phase-1 and Phase-2 Spark jobs, retries, and ad-hoc backfills. Reads pipeline metadata from Metastore. |
 | 3 | **Ingestion Framework** | Spark Structured-Streaming jobs split into two logical phases. Performs checkpointing via Kafka offsets, applies schema evolution & transformations, and writes to Lakehouse paths. |
@@ -39,7 +48,7 @@ Kafka Topic  ──▶  Phase-1 Spark Job  ──▶  Raw JSON  ──▶  Phase
 ```
 
 1. **Phase-1: Raw Dump**  
-   * Consumes Kafka with `startingOffsets=latest` (or earliest for first run).  
+   * Consumes Kafka with `startingOffsets=earliest` for first run.
    * Stores each event as line-delimited JSON in `s3://raw/<topic>/date=YYYY-MM-DD/`.  
    * Captures Kafka metadata columns (offset, partition, timestamp, key).  
    * Persists Structured-Streaming checkpoint to keep offsets.
@@ -60,20 +69,18 @@ Kafka Topic  ──▶  Phase-1 Spark Job  ──▶  Raw JSON  ──▶  Phase
    * If upstream failure drops Kafka data, Airflow can trigger Phase-2 on past raw paths without code change.
 
 <!-- Extra sections removed -->
-```
+
 Docker Compose
 ├─ kafka  (Redpanda)      ──┐
 ├─ localstack (S3)        ──┴─> shared "s3://" volumes
-├─ metastore (Flask + SQLite)
+├─ metastore (FastAPI + Postgres)
 ├─ spark-standalone (driver + workers)
 └─ airflow (scheduler + webserver)
-```
 
 ---
+<!-- Interfaces section intentionally omitted -->
+<!-- Interfaces moved to LLD -->
 
-<!-- Interfaces section removed -->
-### 5.1 Metastore API (excerpt)
-| Method | Path | Description |
 |--------|------|-------------|
 | GET | `/config/{table}` | Retrieve full config JSON. |
 | POST | `/ddl` | Submit `add_column` / `drop_column` ops. |
@@ -96,9 +103,9 @@ _Complete schema left for LLD._
 ---
 
 <!-- Non-Goals section removed -->
-* Data reconciliation framework.
-* Advanced observability (Prometheus, Grafana dashboards). These can be layered later without code change.
-* Multi-AZ high availability; demo runs single-instance containers.
+
+
+
 
 ---
 
